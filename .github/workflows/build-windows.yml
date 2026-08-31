@@ -34,8 +34,11 @@ jobs:
         shell: bash
         run: |
           cd dist_electron
-          ls -lh Muses_Setup_*.exe Muses_v*.zip 2>/dev/null || { echo "No installer output"; exit 1; }
-          tar -czf muses-windows.tar.gz Muses_Setup_*.exe Muses_v*.zip *.blockmap latest*.yml
+          shopt -s nullglob
+          files=( Muses_Setup_*.exe Muses_v*.zip *.blockmap latest*.yml )
+          if [ ${#files[@]} -eq 0 ]; then echo "No installer output"; exit 1; fi
+          ls -lh "${files[@]}"
+          tar -czf muses-windows.tar.gz "${files[@]}"
           ls -lh muses-windows.tar.gz
 
       - name: Upload compressed artifact
