@@ -34,8 +34,11 @@ jobs:
         shell: bash
         run: |
           cd dist_electron
-          ls -lh Muses*.AppImage Muses*.deb 2>/dev/null || { echo "No linux packages produced"; exit 1; }
-          tar -czf muses-linux.tar.gz Muses*.AppImage Muses*.deb *.blockmap latest*.yml
+          shopt -s nullglob
+          files=( Muses*.AppImage Muses*.deb *.blockmap latest*.yml )
+          if [ ${#files[@]} -eq 0 ]; then echo "No linux packages produced"; exit 1; fi
+          ls -lh "${files[@]}"
+          tar -czf muses-linux.tar.gz "${files[@]}"
           ls -lh muses-linux.tar.gz
 
       - name: Upload compressed artifact
