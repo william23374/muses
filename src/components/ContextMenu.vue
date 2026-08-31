@@ -1,0 +1,228 @@
+<template>
+    <div v-if="showContextMenu" ref="contextMenuRef"
+        :style="{ top: `${menuPosition.y}px`, left: `${menuPosition.x}px` }"
+        :class="{ 'submenu-left': submenuLeft }" class="context-menu">
+        <ul>
+            <li @mouseenter="fetchPlaylists" @mouseleave="hideSubMenu">
+                <i class="fa-solid fa-plus"></i>
+                {{ MusesAuth.isAuthenticated ? $t('tian-jia-ge-dan') : $t('qing-xian-deng-lu') }} <i
+                    class="fa-solid fa-chevron-right"></i>
+                <ul v-if="MusesAuth.isAuthenticated && showSubMenu" class="submenu">
+                    <li v-for="playlist in playlists" :key="playlist.listid" :title="playlist.name"
+                        @click="addToPlaylist(playlist.listid, contextSong)">
+                        {{ playlist.name }}
+                    </li>
+                </ul>
+            </li>
+            <li v-if="contextSong.mvhash" @click="playMV(contextSong.mvhash)"><i class="fa-solid fa-video"></i> {{ $t('bo-fang-mv') }}
+            </li>
+            <li @click="shareSong(contextSong)"><i class="fa-solid fa-share-nodes"></i> {{ $t('fen-xiang') }}</li>
+            <li v-if="MusesAuth.isAuthenticated && listId && contextSong.userid === MusesAuth.UserInfo.userid"
+                @click="cancel()"><i class="fa-solid fa-heart"></i> {{ $t('qu-xiao-shou-cang') }}</li>
+            <li v-if="MusesAuth.isAuthenticated" @click="addToNext(contextSong)"><i class="fa-solid fa-arrow-right"></i>
+                {{ $t('tian-jia-dao-xia-yi-shou') }}</li>
+        </ul>
+    </div>
+</template>
+
+<script setup>
+import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { useRouter } from 'vue-router';
+import { get } from '../utils/request';
+import { MusesAuthStore } from '../stores/store';
+import i18n from '@/utils/i18n';
+import { openMvPlayer, share } from '@/utils/utils';
+
+const { t } = useI18n();
+const router = useRouter();
+const MusesAuth = MusesAuthStore();
+const showContextMenu = ref(false);
+const showSubMenu = ref(false);
+const menuPosition = ref({ x: 0, y: 0 });
+const contextMenuRef = ref(null);
+const submenuLeft = ref(false);
+const playlists = ref([]);
+const listId = ref(0);
+const contextSong = ref(null);
+let events;
+const MENU_GAP = 8;
+const SUBMENU_WIDTH = 170;
+
+const adjustMenuPosition = () => {
+    const menu = contextMenuRef.value;
+    if (!menu) return;
+
+    const rect = menu.getBoundingClientRect();
+    const maxX = window.innerWidth - rect.width - MENU_GAP;
+    const maxY = window.innerHeight - rect.height - MENU_GAP;
+    const x = Math.max(MENU_GAP, Math.min(menuPosition.value.x, maxX));
+    const y = Math.max(MENU_GAP, Math.min(menuPosition.value.y, maxY));
+
+    menuPosition.value = { x, y };
+    submenuLeft.value = window.innerWidth - (x + rect.width) < SUBMENU_WIDTH && x > SUBMENU_WIDTH;
+};
+// Context menu show/hide
+const openContextMenu = (event, song, Id) => {
+    events = event
+    event.preventDefault();
+    showContextMenu.value = true;
+    showSubMenu.value = false;
+    listId.value = Id;
+    menuPosition.value = { x: event.clientX, y: event.clientY };
+    contextSong.value = song;
+    nextTick(adjustMenuPosition);
+};
+const hideContextMenu = () => {
+    showContextMenu.value = false;
+    showSubMenu.value = false;
+};
+// Fetch playlist list
+const fetchPlaylists = async () => {
+    if (!MusesAuth.isAuthenticated) return;
+    showSubMenu.value = true;
+    try {
+        const playlistResponse = await get('/user/playlist', {
+            pagesize: 100
+        });
+        if (playlistResponse.status === 1) {
+            playlists.value = playlistResponse.data.info.filter(playlist => playlist.list_create_userid === MusesAuth.UserInfo.userid);
+        }
+    } catch (error) {
+        $message.error(i18n.global.t('huo-qu-ge-dan-shi-bai'));
+    }
+};
+
+// Share song
+const shareSong = (song) => {
+    if (!song) return;
+    share(song.OriSongName, song.FileHash);
+    hideContextMenu();
+};
+
+// Add to playlist
+const addToPlaylist = async (listid, song) => {
+    try {
+        await get(`/playlist/tracks/add?listid=${listid}&data=${encodeURIComponent(song.OriSongName.replace(',', ''))}|${song.FileHash}`);
+        hideContextMenu();
+        $message.success(i18n.global.t('cheng-gong-tian-jia-dao-ge-dan'));
+    } catch (error) {
+        $message.error(i18n.global.t('tian-jia-dao-ge-dan-shi-bai'))
+    }
+};
+// Remove from favorites
+const cancel = async () => {
+    try {
+        await get(`/playlist/tracks/del?listid=${listId.value}&fileids=${contextSong.value.fileid}`);
+        emit('songRemoved', contextSong.value.fileid);
+        hideContextMenu();
+        $message.success(i18n.global.t('cheng-gong-qu-xiao-shou-cang'));
+    } catch (error) {
+        $message.error(i18n.global.t('qu-xiao-shou-cang-shi-bai'))
+    }
+};
+
+const props = defineProps({
+    playerControl: Object
+});
+
+const emit = defineEmits(['songRemoved']);
+
+const addToNext = async (song) => {
+    let songNameParts = song?.OriSongName.split(' - ');
+    props.playerControl.addToNext(song.FileHash, songNameParts[1], song.cover, songNameParts[0], song.timeLength);
+    $message.success(i18n.global.t('tian-jia-cheng-gong'))
+    hideContextMenu();
+};
+
+const hideSubMenu = () => {
+    showSubMenu.value = false;
+};
+
+// Play MV
+const playMV = async (mvhash) => {
+    try {
+        hideContextMenu();
+        props.playerControl?.pause?.();
+        const title = contextSong.value?.OriSongName || t('shi-pin-bo-fang');
+
+        await openMvPlayer(router, mvhash, title);
+    } catch (error) {
+        $message.error(t('da-kai-shi-pin-bo-fang-qi-shi-bai'));
+    }
+};
+
+const handleClickOutside = (event) => {
+    if (!event.target.closest(".context-menu")) {
+        hideContextMenu();
+    }
+};
+onMounted(() => {
+    document.addEventListener('click', handleClickOutside);
+    document.addEventListener('scroll', hideContextMenu);
+});
+onBeforeUnmount(() => {
+    document.removeEventListener('click', handleClickOutside);
+    document.removeEventListener('scroll', hideContextMenu);
+});
+
+defineExpose({ openContextMenu }); 
+</script>
+
+<style lang="scss" scoped>
+.context-menu {
+    position: fixed;
+    background-color: white;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    min-width: 120px;
+    max-width: calc(100vw - 16px);
+    box-sizing: border-box;
+
+    ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+
+    li {
+        padding: 8px 14px;
+        cursor: pointer;
+        position: relative;
+        border-radius: 10px;
+        white-space: nowrap;
+
+        &:hover {
+            background-color: var(--background-color);
+        }
+    }
+}
+
+.context-menu.submenu-left .submenu {
+    left: auto;
+    right: 100%;
+}
+
+.submenu {
+    position: absolute;
+    left: 100%;
+    top: 0;
+    background-color: white;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15);
+    padding: 5px 0;
+    max-height: 320px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: none;
+
+    li {
+        width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+}
+</style>

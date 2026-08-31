@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SID / EDT 生成器</title>
+
+    <!--
+      ============================================================
+      Crypto API interception layer (must load before verifycode.js)
+      ============================================================
+      Monkey-patches SubtleCrypto.prototype methods to intercept WASM-internal
+      encrypt/decrypt/sign/importKey operations and log them to window.__cryptoLog
+      for debugging and analyzing the WASM encryption flow.
+    -->
+    <script>
+      /** Crypto operation log (intercepted data is stored here) */
+      window.__cryptoLog = [];
+
+      /** CryptoKey → metadata map from import (WeakMap avoids memory leaks) */
+      const __keyMap = new WeakMap();
+
+      /**
+       * Convert ArrayBuffer / TypedArray to hex string
+       * @param {ArrayBuffer|TypedArray} buf - binary buffer
+       * @returns {string} hex string (two lowercase digits per byte)
+       */
+      function ab2hex(buf) {
+        if (!buf) return '';
+        let arr;
+        if (buf instanceof ArrayBuffer) arr = new Uint8Array(buf);
+        else if (ArrayBuffer.isView(buf)) arr = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+        else return String(buf);
+        let s = '';
+        for (let i = 0; i < arr.length; i++) s += arr[i].toString(16).padStart(2, '0');
+        return s;
+      }
+
+      /**
+       * Convert ArrayBuffer to UTF-8 string (falls back to hex on failure)
+       * @param {ArrayBuffer} buf - binary buffer
+       * @returns {string} decoded string
+       */
+      function ab2str(buf) {
+        try {
+          return new TextDecoder().decode(buf);
+        } catch (e) {
+          return ab2hex(buf);
+        }
+      }
+
+      /**
+       * Serialize an algorithm descriptor object to JSON string
+       * Automatically converts ArrayBuffer/Uint8Array values to hex
+       * @param {Object} a - Web Crypto API algorithm descriptor
+       * @returns {string} JSON string
+       */
+      function algoStr(a) {
+        try {
+          return JSON.stringify(a, function (k, v) {
+            if (v instanceof ArrayBuffer) return ab2hex(v);
+            if (v instanceof Uint8Array) return ab2hex(v);
+            return v;
+          });
+        } catch (e) {
+          return String(a);
+        }
+      }
+    </script>
+
+    <!-- Import WASM captcha toolkit (provides wasm_bindgen global) -->
+    <script src="verify-pkg/verifycode.js"></script>
+
+    <script>
+      /**
+       * ============================================================
+       * Web Crypto API interception patch
+       * ============================================================
+       *
+       * Injected after verifycode.js loads (wasm_bindgen.init is defined) and
+       * before wasm_bindgen() runs (WASM not yet executed),
+       * so encryption calls inside WASM are logged.
+       *
+       * Intercepted methods:
+       * - encrypt: AES/RSA encryption
+       * - decrypt: AES/RSA decryption
+       * - sign: RSA signing
+       * - importKey: key import (logs raw key data)
+       * - generateKey: key generation
+       * - getRandomValues: random number generation
+       */
+
+      // Save original method references
+      const origEncrypt = SubtleCrypto.prototype.encrypt;
+      const origDecrypt = SubtleCrypto.prototype.decrypt;
+      const origSign = SubtleCrypto.prototype.sign;
+      const origImportKey = SubtleCrypto.prototype.importKey;
+      const origGenerateKey = SubtleCrypto.prototype.generateKey;
+
+      /**
+       * Intercept encrypt: log algorithm, plaintext, key info, and ciphertext
+       */
+      SubtleCrypto.prototype.encrypt = function (algorithm, key, data) {
+        const ki = __keyMap.get(key);
+        const entry = {
+          op: 'encrypt',
+          algo: algoStr(algorithm),
+          plaintext: ab2str(data),
+          plaintextHex: ab2hex(data),
+          keyType: key.type,
+          keyAlgorithm: JSON.stringify(key.algorithm),
+          keyUsages: key.usages,
+        };
+        if (ki) {
+          entry.importedKey = ki.keyDataHex;
+          entry.importedAlgo = ki.algorithm;
+        }
+        window.__cryptoLog.push(entry);
+        const p = origEncrypt.call(this, algorithm, key, data);
+        p.then(function (result) {
+          entry.ciphertextHex = ab2hex(result);
+          entry.ciphertextLen = result.byteLength;
+        }).catch(function () {});
+        return p;
+      };
+
+      /**
+       * Intercept decrypt: log algorithm, ciphertext, and decrypted plaintext
+       */
+      SubtleCrypto.prototype.decrypt = function (algorithm, key, data) {
+        const ki = __keyMap.get(key);
+        const entry = { op: 'decrypt', algo: algoStr(algorithm), ciphertextHex: ab2hex(data) };
+        if (ki) {
+          entry.importedKey = ki.keyDataHex;
+          entry.importedAlgo = ki.algorithm;
+        }
+        window.__cryptoLog.push(entry);
+        const p = origDecrypt.call(this, algorithm, key, data);
+        p.then(function (result) {
+          entry.plaintext = ab2str(result);
+          entry.plaintextHex = ab2hex(result);
+        }).catch(function () {});
+        return p;
+      };
+
+      /**
+       * Intercept sign: log algorithm, data to sign, and signature result
+       */
+      SubtleCrypto.prototype.sign = function (algorithm, key, data) {
+        const entry = { op: 'sign', algo: algoStr(algorithm), dataHex: ab2hex(data) };
+        window.__cryptoLog.push(entry);
+        const p = origSign.call(this, algorithm, key, data);
+        p.then(function (result) {
+          entry.signatureHex = ab2hex(result);
+          entry.signatureLen = result.byteLength;
+        }).catch(function () {});
+        return p;
+      };
+
+      /**
+       * Intercept importKey: log imported key data and map CryptoKey → metadata
+       */
+      SubtleCrypto.prototype.importKey = function (format, keyData, algorithm, extractable, usages) {
+        const ki = {
+          format: format,
+          keyDataHex: ab2hex(keyData),
+          algorithm: algoStr(algorithm),
+          usages: usages,
+        };
+        const p = origImportKey.call(this, format, keyData, algorithm, extractable, usages);
+        p.then(function (cryptoKey) {
+          __keyMap.set(cryptoKey, ki);
+          window.__cryptoLog.push({
+            op: 'importKey',
+            keyDataHex: ki.keyDataHex,
+            algorithm: ki.algorithm,
+            usages: ki.usages,
+          });
+        }).catch(function () {});
+        return p;
+      };
+
+      /**
+       * Intercept generateKey: log algorithm and usages
+       */
+      SubtleCrypto.prototype.generateKey = function (algorithm, extractable, usages) {
+        window.__cryptoLog.push({ op: 'generateKey', algo: algoStr(algorithm), usages: usages });
+        return origGenerateKey.call(this, algorithm, extractable, usages);
+      };
+
+      /**
+       * Intercept getRandomValues: log requested random byte length
+       */
+      const origGRV = crypto.getRandomValues;
+      crypto.getRandomValues = function (arr) {
+        window.__cryptoLog.push({ op: 'getRandomValues', len: arr.length });
+        return origGRV.call(crypto, arr);
+      };
+    </script>
+
+    <style>
+      /* ========== Global reset ========== */
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      /* ========== Page body ========== */
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: #f5f5f5;
+        padding: 40px 20px;
+      }
+
+      /* ========== Container ========== */
+      .container { max-width: 800px; margin: 0 auto; }
+
+      /* ========== Title ========== */
+      h2 { font-size: 20px; color: #333; margin-bottom: 20px; text-align: center; }
+
+      /* ========== Buttons ========== */
+      .btn {
+        display: block; width: 100%; padding: 12px;
+        background: #1677ff; color: #fff; border: none; border-radius: 8px;
+        font-size: 15px; cursor: pointer; margin-bottom: 8px;
+      }
+      .btn:active { opacity: 0.8; }
+      .btn-clear { background: #999; }
+
+      /* ========== Result area ========== */
+      .result { margin-top: 16px; }
+      .field { margin-bottom: 12px; }
+      .field label { display: block; font-size: 13px; color: #666; margin-bottom: 4px; }
+      .field .val {
+        background: #fff; border: 1px solid #e0e0e0; border-radius: 6px;
+        padding: 10px 12px; font-size: 12px; color: #333;
+        word-break: break-all; font-family: monospace;
+        min-height: 40px; white-space: pre-wrap;
+        max-height: 300px; overflow-y: auto;
+      }
+
+      /* ========== Log section ========== */
+      .log-section { margin-top: 24px; }
+      .log-section h3 { font-size: 15px; color: #333; margin-bottom: 8px; }
+      .log-entry {
+        background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+        padding: 12px; margin-bottom: 8px; font-size: 12px; font-family: monospace;
+      }
+      .log-entry .op {
+        display: inline-block; padding: 2px 8px; border-radius: 4px;
+        font-weight: 600; font-size: 11px; margin-bottom: 6px;
+      }
+
+      /* Log entry type colors */
+      .op-encrypt { background: #fff2f0; color: #ff4d4f; }
+      .op-importKey { background: #e6f4ff; color: #1677ff; }
+      .op-decrypt { background: #f6ffed; color: #52c41a; }
+      .op-generateKey { background: #fffbe6; color: #faad14; }
+      .op-sign { background: #f9f0ff; color: #722ed1; }
+      .op-getRandomValues { background: #f5f5f5; color: #666; }
+
+      /* Log rows */
+      .log-row { display: flex; gap: 8px; margin-bottom: 3px; }
+      .log-label { color: #999; min-width: 100px; flex-shrink: 0; }
+      .log-value { color: #333; word-break: break-all; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h2>SID / EDT 生成器</h2>
+
+      <!-- Action buttons -->
+      <button class="btn" id="generate">生成</button>
+      <button class="btn btn-clear" id="clearLog">清除日志</button>
+
+      <!-- Generation results -->
+      <div class="result">
+        <div class="field">
+          <label>sid（RSA-OAEP 加密的 AES 密钥，Base64）</label>
+          <div class="val" id="outSid"></div>
+        </div>
+        <div class="field">
+          <label>edt（AES-128-CBC 加密的行为数据，Base64）</label>
+          <div class="val" id="outEdt"></div>
+        </div>
+      </div>
+
+      <!-- Crypto API interception log -->
+      <div class="log-section">
+        <h3>Crypto API 拦截日志</h3>
+        <div id="logContainer"></div>
+      </div>
+    </div>
+
+    <script>
+      /**
+       * ============================================================
+       * SID / EDT generator main logic
+       * ============================================================
+       *
+       * Features:
+       * 1. Load WASM module (verifycode_bg.wasm)
+       * 2. On "Generate" click, call wasm_bindgen.EData to produce sid and edt
+       * 3. Render intercepted Crypto API call logs (encryption, key import, etc.)
+       *
+       * Purpose:
+       * - Debug WASM encryption flow and analyze sid/edt generation
+       * - Inspect intermediate data such as AES keys, RSA public keys, and plaintext
+       */
+      (async () => {
+        // ========== DOM element references ==========
+        const btn = document.getElementById('generate');        // generate button
+        const outSid = document.getElementById('outSid');       // sid output area
+        const outEdt = document.getElementById('outEdt');       // edt output area
+        const logContainer = document.getElementById('logContainer'); // log container
+
+        /**
+         * Render Crypto API interception log
+         * Reads from window.__cryptoLog, newest entries first
+         */
+        function renderLog() {
+          const logs = window.__cryptoLog;
+          if (!logs.length) {
+            logContainer.innerHTML = '<div style="color:#999;font-size:13px">暂无加密调用记录。</div>';
+            return;
+          }
+          let html = '';
+          for (let i = logs.length - 1; i >= 0; i--) {
+            const e = logs[i];
+            const opClass = 'op-' + (e.op || 'unknown');
+            html += '<div class="log-entry">';
+            html += '<div class="op ' + opClass + '">' + e.op + '</div>';
+            for (const k of Object.keys(e)) {
+              // Skip internal fields
+              if (k === 'op' || k === 'timestamp' || k === 'keyId' || k === '_keyInfo') continue;
+              html += '<div class="log-row"><span class="log-label">' + k + ':</span><span class="log-value">' + e[k] + '</span></div>';
+            }
+            html += '</div>';
+          }
+          logContainer.innerHTML = html;
+        }
+
+        // Clear log button
+        document.getElementById('clearLog').addEventListener('click', () => {
+          window.__cryptoLog.length = 0;
+          renderLog();
+        });
+
+        /**
+         * Initialize app: load WASM module
+         */
+        async function initApp() {
+          try {
+            if (typeof wasm_bindgen !== 'undefined') {
+              await wasm_bindgen('./verify-pkg/verifycode_bg.wasm');
+              wasm_bindgen.run();
+              console.log('[WASM] Loaded successfully');
+            }
+          } catch (e) {
+            console.warn('[WASM] initialization failed:', e);
+          }
+
+          renderLog();
+
+          // Generate button click handler
+          btn.addEventListener('click', () => {
+            btn.disabled = true;
+            btn.textContent = '生成中...';
+            outSid.textContent = '';
+            outEdt.textContent = '';
+
+            setTimeout(() => {
+              try {
+                if (typeof wasm_bindgen !== 'undefined' && wasm_bindgen.EData) {
+                  const e = new wasm_bindgen.EData();
+                  outSid.textContent = e.get_sid();
+                  outEdt.textContent = e.get_edt();
+                } else {
+                  outSid.textContent = '(WASM 未加载)';
+                }
+              } catch (err) {
+                outSid.textContent = 'Error: ' + err.message;
+              }
+              // Wait for async .then() callbacks to populate log before rendering
+              setTimeout(function () {
+                renderLog();
+                btn.disabled = false;
+                btn.textContent = '生成';
+              }, 200);
+            }, 50);
+          });
+        }
+
+        await initApp();
+      })();
+    </script>
+  </body>
+</html>

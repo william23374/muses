@@ -1,0 +1,148 @@
+# Release deployment
+## Multi-platform deployment
+name: Build Release
+
+## Permissions
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - v*
+
+jobs:
+  # Windows build
+  build-windows:
+    name: Build for Windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      # Check out Git repository
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+      # Install Node.js
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+      # Install project dependencies
+      - name: Install Dependencies
+        run: npm install
+      # Build
+      - name: Build App for Windows
+        run: npm run pkgwin
+        shell: bash
+      # Upload build artifacts
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-win
+          if-no-files-found: ignore
+          path: |
+            bin/*.exe
+      # Create GitHub Release
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          token: ${{ secrets.GITHUB_TOKEN}}
+          draft: false
+          prerelease: false
+          files: bin/*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN}}
+
+  # macOS build
+  build-masos:
+    name: Build for MacOS
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      # Check out Git repository
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+      # Install Node.js
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+      # Install project dependencies
+      - name: Install Dependencies
+        run: npm install
+      # Build
+      - name: Build App for Macos
+        run: npm run pkgmacos
+        shell: bash
+      # Upload build artifacts
+      - name: Upload Macos artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-macos
+          if-no-files-found: ignore
+          path: |
+            bin/*
+      # Create GitHub Release
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          token: ${{ secrets.GITHUB_TOKEN}}
+          draft: false
+          prerelease: false
+          files: bin/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN}}
+
+  # Linux build
+  build-linux:
+    name: Build for Linux
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      # Check out Git repository
+      - name: Check out Git repository
+        uses: actions/checkout@v4
+      # Install Node.js
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+      # Update Ubuntu package sources
+      - name: Ubuntu Update with sudo
+        run: sudo apt-get update
+      # Install RPM and Pacman plugins
+      - name: Install RPM & Pacman (on Ubuntu)
+        run: |
+          sudo apt-get install --no-install-recommends -y rpm &&
+          sudo apt-get install --no-install-recommends -y libarchive-tools &&
+          sudo apt-get install --no-install-recommends -y libopenjp2-tools
+      # Install project dependencies
+      - name: Install Dependencies
+        run: npm install
+      # Build
+      - name: Build App for Linux
+        run: npm run pkglinux
+        shell: bash
+      # Upload build artifacts
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-linux
+          if-no-files-found: ignore
+          path: |
+            bin/*
+      # Create GitHub Release
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          token: ${{ secrets.GITHUB_TOKEN}}
+          draft: false
+          prerelease: false
+          files: bin/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN}}

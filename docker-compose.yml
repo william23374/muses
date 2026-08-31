@@ -1,0 +1,16 @@
+version: '3.3'
+
+services:
+  muses:
+    container_name: muses # Container name
+    restart: unless-stopped # Auto restart
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    environment:
+      - PORT=6521
+      - platform=lite
+    ports: # Port mapping
+      - "8080:8080"  # Frontend service
+      - "6521:6521"  # API service

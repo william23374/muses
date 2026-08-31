@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+# Local API + Vite service control — Linux SysV / service(8) style.
+#
+#   ./scripts/musesctl {start|stop|restart|status}
+#   ./scripts/musesctl start --electron
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PID_DIR="$ROOT/.dev-pids"
+LOG_DIR="$ROOT/.dev-logs"
+API_PORT=6521
+VITE_PORT=8080
+WITH_ELECTRON=0
+PROG="$(basename "$0")"
+
+usage() {
+  cat <<EOF
+Usage: $PROG {start|stop|restart|status} [--electron]
+
+  start      Start API (:$API_PORT) and frontend (:$VITE_PORT)
+  stop       Stop API and frontend
+  restart    Restart API and frontend
+  status     Show service status
+
+Options:
+  --electron, -e   Also manage Electron desktop window
+  -h, --help       Show this help
+
+Examples:
+  $PROG start
+  $PROG stop
+  $PROG restart
+  $PROG status
+  $PROG start --electron
+EOF
+}
+
+is_listening() {
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+port_pids() {
+  lsof -t -iTCP:"$1" -sTCP:LISTEN 2>/dev/null || true
+}
+
+pidfile_pid() {
+  local name="$1"
+  local pidfile="$PID_DIR/$name.pid"
+  if [[ -f "$pidfile" ]]; then
+    cat "$pidfile" 2>/dev/null || true
+  fi
+}
+
+is_pid_alive() {
+  local pid="${1:-}"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+start_bg() {
+  local name="$1"
+  local pidfile="$PID_DIR/$name.pid"
+  local logfile="$LOG_DIR/$name.log"
+  shift
+
+  if [[ -f "$pidfile" ]]; then
+    local old
+    old="$(cat "$pidfile" 2>/dev/null || true)"
+    if is_pid_alive "$old"; then
+      echo "[skip] $name already running (pid $old)"
+      return 0
+    fi
+    rm -f "$pidfile"
+  fi
+
+  nohup "$@" >"$logfile" 2>&1 &
+  echo $! >"$pidfile"
+  echo "[ok] $name started (pid $(cat "$pidfile")), log: $logfile"
+}
+
+kill_pidfile() {
+  local name="$1"
+  local pidfile="$PID_DIR/$name.pid"
+  if [[ ! -f "$pidfile" ]]; then
+    return 0
+  fi
+  local pid
+  pid="$(cat "$pidfile" 2>/dev/null || true)"
+  if is_pid_alive "$pid"; then
+    kill "$pid" 2>/dev/null || true
+    sleep 0.3
+    if is_pid_alive "$pid"; then
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+    echo "[ok] stopped $name (pid $pid)"
+  else
+    echo "[skip] $name not running"
+  fi
+  rm -f "$pidfile"
+}
+
+kill_port() {
+  local port="$1"
+  local label="$2"
+  local pids
+  pids="$(port_pids "$port")"
+  if [[ -z "${pids:-}" ]]; then
+    echo "[skip] $label nothing on :$port"
+    return 0
+  fi
+  # shellcheck disable=SC2086
+  kill $pids 2>/dev/null || true
+  sleep 0.3
+  pids="$(port_pids "$port")"
+  if [[ -n "${pids:-}" ]]; then
+    # shellcheck disable=SC2086
+    kill -9 $pids 2>/dev/null || true
+  fi
+  echo "[ok] $label freed :$port"
+}
+
+wait_port() {
+  local port="$1"
+  local label="$2"
+  local i
+  for i in $(seq 1 40); do
+    if is_listening "$port"; then
+      echo "[ok] $label ready on :$port"
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "[warn] $label not ready on :$port (check $LOG_DIR)"
+  return 1
+}
+
+cmd_start() {
+  mkdir -p "$PID_DIR" "$LOG_DIR"
+  cd "$ROOT"
+
+  if is_listening "$API_PORT"; then
+    echo "[skip] API already listening on :$API_PORT"
+  else
+    start_bg api npm run api
+    wait_port "$API_PORT" "API" || true
+  fi
+
+  if is_listening "$VITE_PORT"; then
+    echo "[skip] Vite already listening on :$VITE_PORT"
+  else
+    start_bg vite npm run serve
+    wait_port "$VITE_PORT" "Vite" || true
+  fi
+
+  if [[ "$WITH_ELECTRON" -eq 1 ]]; then
+    start_bg electron npm run electron:serve
+  fi
+
+  echo
+  echo "Frontend: http://localhost:$VITE_PORT"
+  echo "API:      http://127.0.0.1:$API_PORT"
+}
+
+cmd_stop() {
+  kill_pidfile api
+  kill_pidfile vite
+  if [[ "$WITH_ELECTRON" -eq 1 ]]; then
+    kill_pidfile electron
+  fi
+
+  kill_port "$API_PORT" "API"
+  kill_port "$VITE_PORT" "Vite"
+
+  if [[ "$WITH_ELECTRON" -eq 1 ]]; then
+    pkill -f "$ROOT/node_modules/electron/cli.js" 2>/dev/null || true
+    pkill -f "$ROOT/node_modules/electron/dist/Electron.app" 2>/dev/null || true
+  fi
+
+  echo "Stopped."
+}
+
+cmd_restart() {
+  cmd_stop
+  sleep 0.5
+  cmd_start
+}
+
+print_service_status() {
+  local name="$1"
+  local port="$2"
+  local pid
+  local port_state="down"
+  local pids=""
+
+  pid="$(pidfile_pid "$name")"
+  if is_listening "$port"; then
+    port_state="up"
+    pids="$(port_pids "$port" | tr '\n' ' ')"
+  fi
+
+  if [[ "$port_state" == "up" ]]; then
+    printf "%-8s  %-6s  port=:%-5s  listen_pid=%s" "$name" "running" "$port" "${pids:-?}"
+    if is_pid_alive "$pid"; then
+      printf "  wrapper_pid=%s" "$pid"
+    fi
+    printf "\n"
+  elif is_pid_alive "$pid"; then
+    printf "%-8s  %-6s  port=:%-5s  wrapper_pid=%s (port not open yet)\n" "$name" "starting" "$port" "$pid"
+  else
+    printf "%-8s  %-6s  port=:%-5s\n" "$name" "stopped" "$port"
+  fi
+}
+
+cmd_status() {
+  print_service_status api "$API_PORT"
+  print_service_status vite "$VITE_PORT"
+
+  local epid
+  epid="$(pidfile_pid electron)"
+  if is_pid_alive "$epid"; then
+    printf "%-8s  %-6s  wrapper_pid=%s\n" "electron" "running" "$epid"
+  else
+    printf "%-8s  %-6s\n" "electron" "stopped"
+  fi
+
+  echo
+  echo "Frontend: http://localhost:$VITE_PORT"
+  echo "API:      http://127.0.0.1:$API_PORT"
+  echo "Logs:     $LOG_DIR/"
+}
+
+COMMAND=""
+for arg in "$@"; do
+  case "$arg" in
+    start|stop|restart|status|reload|force-reload)
+      # reload / force-reload → restart (LSB init.d compatibility)
+      if [[ "$arg" == "reload" || "$arg" == "force-reload" ]]; then
+        COMMAND="restart"
+      else
+        COMMAND="$arg"
+      fi
+      ;;
+    --electron|-e)
+      WITH_ELECTRON=1
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "$PROG: unrecognized argument '$arg'" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+# Linux service style: action is required
+if [[ -z "$COMMAND" ]]; then
+  usage >&2
+  exit 2
+fi
+
+case "$COMMAND" in
+  start) cmd_start ;;
+  stop) cmd_stop ;;
+  restart) cmd_restart ;;
+  status) cmd_status ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

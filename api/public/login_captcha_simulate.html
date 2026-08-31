@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- Mobile viewport settings for correct scaling across devices -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>登录</title>
+    <style>
+      /* ========== Global reset styles ========== */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box; /* Use border-box model so padding does not expand the element */
+      }
+
+      /* ========== Page body: full-screen center + gradient background ========== */
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        /* Blue-purple-pink gradient background */
+        background: linear-gradient(135deg, #e0ecff 0%, #f5f0ff 50%, #fce4ec 100%);
+      }
+
+      /* ========== Login card container: frosted glass effect ========== */
+      .login-card {
+        background: rgba(255, 255, 255, 0.85); /* Semi-transparent white background */
+        backdrop-filter: blur(20px); /* Frosted glass blur effect */
+        -webkit-backdrop-filter: blur(20px); /* Safari compatibility */
+        border: 1px solid rgba(255, 255, 255, 0.6);
+        border-radius: 20px;
+        padding: 48px 40px;
+        width: 100%;
+        max-width: 400px; /* Max width limit */
+        box-shadow: 0 8px 32px rgba(100, 120, 180, 0.12), 0 2px 8px rgba(0, 0, 0, 0.04);
+      }
+
+      /* ========== Login page header area ========== */
+      .login-header {
+        text-align: center;
+        margin-bottom: 36px;
+      }
+
+      .login-header h1 {
+        font-size: 26px;
+        font-weight: 600;
+        color: #1a1a2e;
+        letter-spacing: 0.5px;
+      }
+
+      .login-header p {
+        font-size: 14px;
+        color: #7c8db5; /* Light gray subtitle */
+        margin-top: 8px;
+      }
+
+      /* ========== Common form field styles ========== */
+      .form-group {
+        margin-bottom: 20px;
+      }
+
+      .form-group label {
+        display: block;
+        font-size: 13px;
+        font-weight: 500;
+        color: #4a5568;
+        margin-bottom: 8px;
+      }
+
+      .form-group input {
+        width: 100%;
+        padding: 14px 16px;
+        font-size: 15px;
+        color: #1a1a2e;
+        background: #f7f9fc; /* Light gray-blue input background */
+        border: 1.5px solid #e2e8f0;
+        border-radius: 12px;
+        outline: none;
+        transition: all 0.25s ease; /* Smooth transition on focus */
+      }
+
+      /* Input placeholder color */
+      .form-group input::placeholder {
+        color: #a0aec0;
+      }
+
+      /* Input focus state: blue border + glow shadow */
+      .form-group input:focus {
+        border-color: #6c8cff;
+        background: #fff;
+        box-shadow: 0 0 0 3px rgba(108, 140, 255, 0.12);
+      }
+
+      /* ========== Login button ========== */
+      .login-btn {
+        width: 100%;
+        padding: 14px;
+        font-size: 15px;
+        font-weight: 600;
+        color: #fff;
+        /* Blue-purple gradient button */
+        background: linear-gradient(135deg, #6c8cff 0%, #a78bfa 100%);
+        border: none;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        margin-top: 8px;
+        letter-spacing: 0.5px;
+      }
+
+      /* Button hover: lift + deeper shadow */
+      .login-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 20px rgba(108, 140, 255, 0.35);
+      }
+
+      /* Button active: return to original position */
+      .login-btn:active {
+        transform: translateY(0);
+      }
+
+      /* ========== Tencent captcha container (hidden by default, shown on demand) ========== */
+      .captcha-box {
+        margin-top: 24px;
+      }
+
+      /* ========== SMS captcha area (hidden by default) ========== */
+      .sms-captcha {
+        margin-top: 24px;
+        display: none; /* Initially hidden, shown by JS when needed */
+      }
+
+      .sms-captcha .form-group {
+        margin-bottom: 16px;
+      }
+
+      /* SMS verify button style (matches login button) */
+      .sms-captcha .verify-btn {
+        width: 100%;
+        padding: 14px;
+        font-size: 15px;
+        font-weight: 600;
+        color: #fff;
+        background: linear-gradient(135deg, #6c8cff 0%, #a78bfa 100%);
+        border: none;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        margin-top: 8px;
+      }
+
+      .sms-captcha .verify-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 20px rgba(108, 140, 255, 0.35);
+      }
+
+      /* ========== Back to home link ========== */
+      .back-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 20px;
+        font-size: 14px;
+        color: #7c8db5;
+        text-decoration: none;
+        transition: color 0.25s ease;
+      }
+
+      .back-link:hover {
+        color: #6c8cff; /* Turns blue on hover */
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ========== Login card main container ========== -->
+    <div class="login-card">
+      <!-- Page title -->
+      <div class="login-header">
+        <h1>欢迎登录</h1>
+        <p>请输入您的账号信息</p>
+      </div>
+
+      <!-- Username input -->
+      <div class="form-group">
+        <label>用户名</label>
+        <label for="username"></label><input type="text" id="username" placeholder="请输入用户名" />
+      </div>
+
+      <!-- Password input -->
+      <div class="form-group">
+        <label>密码</label>
+        <label for="password"></label><input type="password" id="password" placeholder="请输入密码" />
+      </div>
+
+      <!-- Login button -->
+      <button class="login-btn" id="loginBtn">登 录</button>
+
+      <!-- Tencent captcha mount container (show/hide controlled by JS) -->
+      <div class="captcha-box" id="captchaBox"></div>
+
+      <!-- SMS captcha input area (show/hide controlled by JS) -->
+      <div class="sms-captcha" id="smsCaptcha">
+        <div class="form-group">
+          <label>验证码</label>
+          <label for="smsCode"></label><input type="text" id="smsCode" placeholder="请输入验证码" maxlength="6" />
+        </div>
+        <button class="verify-btn" id="smsVerifyBtn">验证</button>
+      </div>
+
+      <!-- Back to home link -->
+      <a class="back-link" href="./index.html">← 返回首页</a>
+    </div>
+
+    <script src="./fingerprint.js"></script>
+    <script>
+      /**
+       * ============================================================
+       * Login page main logic (pure JS simulation, no WASM)
+       * ============================================================
+       *
+       * Differences from login_captcha.html:
+       * - This file does not load WASM; sid/edt encryption is implemented in pure JavaScript
+       * - Fully simulates WASM behavioral data collection and encryption flow
+       * - Suitable for environments without WASM (some mobile browsers, automation tests, etc.)
+       *
+       * Overall flow:
+       * 1. Read device identifiers from cookies (mid, userid, dfid)
+       * 2. Generate random WebGL fingerprint and simulated mouse behavioral data
+       * 3. AES-128-CBC encrypt behavioral data to produce EDT
+       * 4. RSA-OAEP encrypt AES key to produce SID
+       * 5. Call login API; show captcha if secondary verification is required
+       */
+
+      // Get generator functions from fingerprint.js
+      const { generateWebGLHash, generateEDTData, encryptSid, hexToBase64, ri } = fingerprint;
+
+      // ========== DOM element references ==========
+      const usernameInput = document.getElementById('username');
+      const passwordInput = document.getElementById('password');
+      const loginBtn = document.getElementById('loginBtn');
+      const captchaBox = document.getElementById('captchaBox'); // Tencent captcha container
+      const smsCaptcha = document.getElementById('smsCaptcha'); // SMS captcha area
+      const smsCode = document.getElementById('smsCode'); // SMS captcha input field
+      const smsVerifyBtn = document.getElementById('smsVerifyBtn'); // SMS verify button
+
+      /**
+       * Shorthand to get a DOM element by id
+       * @param {string} id - element id
+       * @returns {HTMLElement}
+       */
+      function $(id) {
+        return document.getElementById(id);
+      }
+
+      /**
+       * Dynamically load an external JS script
+       * @param {string} url - script URL
+       * @param {function} cb - callback on load success/failure
+       */
+      function loadScript(url, cb) {
+        const s = document.createElement('script');
+        s.src = url;
+        s.onload = function () {
+          cb();
+        };
+        s.onerror = function () {
+          cb(new Error('load failed'));
+        };
+        document.head.appendChild(s);
+      }
+
+      /**
+       * Read a cookie value by name
+       * @param {string} name - cookie key name
+       * @returns {string} cookie value, or '0' if missing
+       */
+      function getCookie(name) {
+        const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+        return match ? decodeURIComponent(match[1]) : '0';
+      }
+
+      // ========== Login button click handler ==========
+      loginBtn.addEventListener('click', async () => {
+        const username = usernameInput.value;
+        const password = passwordInput.value;
+
+        // Read device identifiers from cookies; default to '0' if missing
+        // Cookie key names match those injected in server.js
+        const mid = getCookie('KUGOU_API_MID'); // device MID (generated by calculateMid in server.js)
+        const userid = getCookie('userid'); // user ID (Set-Cookie after successful login)
+        const dfid = getCookie('dfid'); // device fingerprint ID (written to cookie after register_dev)
+
+        // Randomize mouse trajectory params so each request looks more like a real user
+        const points = ri(30, 60); // mouse trajectory sample count (30–60 points)
+        const startX = ri(200, 600); // mouse start X (middle of page)
+        const startY = ri(200, 500); // mouse start Y
+        const endX = ri(500, 700); // mouse end X (near login button)
+        const endY = ri(80, 150); // mouse end Y
+
+        // Generate WebGL fingerprint hash and current timestamp
+        const webglHash = generateWebGLHash();
+        const ts = Date.now();
+
+        // Generate behavioral data (mouse trajectory + scroll + window events)
+        const data = generateEDTData({
+          startX,
+          startY,
+          endX,
+          endY,
+          mousePoints: points,
+        });
+
+        // Build full plaintext
+        // Format: mid=xxx;userid=xxx;dfid=xxx;webgl=xxx;webdriver=0;ts=xxx;data=xxx
+        const sidPlaintext = `mid=${mid};userid=${userid};dfid=${dfid};webgl=${webglHash};webdriver=0;ts=${ts};data=${data}`;
+
+        // Encrypt: AES plaintext → EDT; RSA AES key → SID
+        const result = await encryptSid(sidPlaintext);
+
+        // SID = RSA-OAEP encrypted AES key (server public key protects AES key)
+        // EDT = AES-CBC encrypted fingerprint plaintext (AES key encrypts behavioral data)
+        const sid = hexToBase64(result.rsaCiphertextHex);
+        const edt = hexToBase64(result.aesCiphertextHex);
+
+        console.log({ sid, edt });
+
+        let sessionid = '';
+
+        try {
+          // Step 1: call login API
+          const loginPromise = await fetch(`/login?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`).then(
+            (response) => response.json()
+          );
+
+          // status === 1 means login succeeded
+          if (loginPromise.status === 1) {
+            alert('登录成功！');
+          } else {
+            // error_code === 20028 means secondary security verification is required
+            // ssaCode is the verification event ID returned by the server
+            if (loginPromise.error_code === 20028 && loginPromise.ssaCode) {
+              // Step 2: fetch verification details (type, Tencent captcha appid, etc.)
+              const verifyInfo = await fetch(`/get/verify/info?eventid=${loginPromise.ssaCode}`).then((response) => response.json());
+              console.log('Verify Info:', verifyInfo);
+
+              sessionid = verifyInfo.data.sessionid; // verification session ID
+              const txappid = verifyInfo.data.txappid; // Tencent captcha app ID
+              const business = verifyInfo.data.business; // business identifier
+              const v_type = verifyInfo.data.v_type; // verification type (23=Tencent captcha, 32=SMS)
+
+              if (v_type === 23) {
+                // ===== Tencent graphical captcha flow (v_type=23) =====
+                // Show captcha container, hide SMS captcha area
+                captchaBox.style.display = 'block';
+                smsCaptcha.style.display = 'none';
+
+                // Dynamically load Tencent captcha JS SDK
+                loadScript('https://turing.captcha.qcloud.com/TCaptcha.js', function () {
+                  if (typeof TencentCaptcha === 'undefined') {
+                    return;
+                  }
+                  var appId = txappid;
+
+                  // Create Tencent captcha instance
+                  // Callback res contains verification result:
+                  //   ret === 0 means verification passed
+                  //   res.ticket: verification ticket
+                  //   res.randstr: random string (anti-replay)
+                  var captcha = new TencentCaptcha(
+                    appId,
+                    function (res) {
+                      console.log('Captcha response:', res);
+                      if (res.ret === 0) {
+                        // Verification passed: build payload and send to server
+                        // Format: JSON string KGCodeTX|{ticket, randstr, txappid}
+                        // KGCodeTX is the Tencent captcha identifier prefix
+                        const a = 'KGCodeTX|' + JSON.stringify({ ticket: res.ticket, randstr: res.randstr, txappid: appId });
+
+                        // Step 3: submit captcha result to server for verification
+                        fetch(
+                          `/verify/user/info?eventid=${loginPromise.ssaCode}&v_type=${v_type}&verifycode=${encodeURIComponent(
+                            a
+                          )}&sid=${encodeURIComponent(sid)}&edt=${encodeURIComponent(edt)}`,
+                          {
+                            method: 'GET',
+                          }
+                        )
+                          .then((response) => response.json())
+                          .then((data) => {
+                            console.log('Verification Result:', data);
+                          })
+                          .catch((error) => {
+                            console.error('Verification request failed:', error);
+                            alert('验证码验证请求失败');
+                          });
+                      } else {
+                        // User closed captcha dialog or verification failed
+                        alert(`用户取消 (ret=${res.ret})`);
+                      }
+                    },
+                    {
+                      type: '', // captcha type (empty string uses backend default)
+                      showHeader: false, // hide captcha dialog header
+                      ready: function () {}, // captcha ready callback (no-op)
+                    }
+                  );
+                  console.log('Captcha initialized:', captcha);
+                  captcha.show(); // show captcha dialog
+                });
+              } else if (v_type === 32) {
+                // ===== SMS captcha flow (v_type=32) =====
+                // Hide Tencent captcha container, show SMS captcha input area
+                captchaBox.style.display = 'none';
+                smsCaptcha.style.display = 'block';
+                smsCode.value = '';
+                smsCode.focus(); // auto-focus SMS code input
+
+                // Bind SMS verify button click handler
+                smsVerifyBtn.onclick = async function () {
+                  const code = smsCode.value.trim();
+                  if (!code) {
+                    alert('请输入验证码');
+                    return;
+                  }
+
+                  try {
+                    // Step 3: submit SMS code to server for verification
+                    const verifyResponse = await fetch(
+                      `/verify/user/info?eventid=${loginPromise.ssaCode}&v_type=${v_type}&verifycode=${encodeURIComponent(
+                        code
+                      )}&sid=${encodeURIComponent(sid)}&edt=${encodeURIComponent(edt)}`,
+                      {
+                        method: 'GET',
+                      }
+                    );
+                    const verifyData = await verifyResponse.json();
+                    console.log('SMS Verification Result:', verifyData);
+                    alert('验证成功');
+                  } catch (error) {
+                    console.error('SMS Verification request failed:', error);
+                    alert('验证码验证请求失败');
+                  }
+                };
+              } else {
+                // Unknown verification type
+                console.warn('未知的验证类型:', v_type);
+                alert('未知的验证类型');
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Login request failed:', e);
+        }
+      });
+    </script>
+  </body>
+</html>
