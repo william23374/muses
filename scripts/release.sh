@@ -211,7 +211,13 @@ step_download() {
     rm -f "$gz"
   done
 
-  if ! ls "$OUT_DIR"/${verify} >/dev/null 2>&1; then
+  # verify at least one expected artifact exists (globs are a union, not all required)
+  shopt -s nullglob
+  local f ok=0
+  for f in "$OUT_DIR"/${verify}; do
+    if [ -e "$f" ]; then ok=1; break; fi
+  done
+  if [ "$ok" = 0 ]; then
     die "No ${verify} found after extraction"
   fi
   info "Downloaded to: $OUT_DIR"
